@@ -13,11 +13,14 @@ Program RoguesDenCooker;
 ///////////////////////////////////////////////////////////////////////
 
 Const
-  CookingType  = 'Lobster';      // ***Input type of item to cook, for progress report only***
+  {Cooking Settings}
+  CookingType  = '';      // ***Input type of item to cook, for progress report only***
 
-  Efficiency   = True;    // ***Minimal antiban settings, will find banker faster***
+  {AntiBan Settings}
+  Efficiency   = False;   // ***Minimal antiban settings, will find banker faster***
 
-  Breaks       = False;   // ***Take Breaks or no?***
+  {Break Settings}
+  Breaks       = True;    // ***Take Breaks or no?***
   SwitchWorlds = True;    // ***Switch worlds after a break?***
   BreakIn      = 600;     // ***How long before we take a break? (minutes)***
   BreakFor     = 15;      // ***How long will we break for? (minutes)***
@@ -33,7 +36,7 @@ Begin
  Begin
     Name        := '';     // ***Player username***
     Pass        := '';     // ***Player password***
-    Pin         := '5912';     // ***Player pin***
+    Pin         := '';     // ***Player pin***
     WorldInfo   := [];     // ***World Desired***
     Member      := True;
     Active      := True;
@@ -54,7 +57,7 @@ Var
   StartTime,CurrentTime: Int64;
 
 Const
-  ScriptVersion = '1.5';
+  ScriptVersion = '1.6';
 
   BankerHue=0.26;
   BankerSat=0.59;
@@ -62,6 +65,43 @@ Const
   BankerCol=3496520;
 
   Debug = False;
+
+{*******************************************************************************
+Function AutoupdateMe;
+By: Shuttleu
+Edited By: Ashaman88
+Description: Autoupdates Script.
+*******************************************************************************}
+Procedure AutoUpdateMe;
+Var
+  Neifile: Integer;
+  OnlineVersion, NewScript, NeiFeilNennen: String;
+Begin
+  Writeln('Checking for script updates...');
+  OnlineVersion := GetPage('https://roguedencooker.googlecode.com/git/Version.txt');
+  Writeln(OnlineVersion);
+  Writeln(ScriptVersion)
+  If (trim(OnlineVersion) > ScriptVersion) Then
+  Begin
+    WriteLn('Newer script version online!');
+    WriteLn('Autoupdating to newer version.');
+    NewScript := GetPage('https://roguedencooker.googlecode.com/git/AshamanRoguesCooker.simba');
+    NeiFeilNennen := ScriptPath+ 'AshamanRougesDen V'+OnlineVersion+' by Ashaman88.simba';
+    Neifile := Rewritefile(NeiFeilNennen, true);
+    Try
+      WriteFileString(Neifile, NewScript);
+    Except
+      Begin
+        WriteLn('Fatal error writing to '+NeiFeilNennen+'!!');
+        Terminatescript;
+      End;
+    End;
+    CloseFile(Neifile);
+    WriteLn('New script downloaded to '+NeiFeilNennen+'!! Please use this one!!');
+    TerminateScript;
+  End Else
+    WriteLn('You have the latest version of the script!');
+End;
 
 Function WaitLoggedIn(Time:Integer): Boolean;
 Var
@@ -632,7 +672,10 @@ Begin
       MakeCompass('N');
       Exit;
     End Else
+    Begin
       CompassMovement(10,200,False);
+      Exit;
+    End;
   I := Random(600);
   Case I Of
     1..3:
@@ -656,7 +699,7 @@ Begin
     201..400:
       Begin
         Wait(RandomRange(250, 1500));
-       // OffMM(Random(4),RandomRange(2500,4000),10000);
+        OffMM(Random(4),RandomRange(2500,4000),10000);
         Result:=True;
       End;
     401..600:
@@ -961,7 +1004,8 @@ Begin
       Logout;
       TerminateScript();
     End;
-    CheckStuff;
+    If CheckStuff Then
+      Exit;
     Wait(Random(200));
   Until (InvCount>15);
 
@@ -1067,7 +1111,7 @@ Begin
           Begin
             Wait(Random(100));
             ClickMouse2(True);
-            Wait(RandomRange(3000,4000));
+            Wait(RandomRange(1000,4000));
             Result:=True;
             Break;
           End;
@@ -1086,11 +1130,46 @@ Begin
             ClickMouse2(True);
           End;
           Result:=False;
+          SetLength(TPA,0);
+          SetLength(ATPA,0);
+          SetLength(TBA,0);
           Exit;
         End Else
+        Begin
+          SetLength(TPA,0);
+          SetLength(ATPA,0);
+          SetLength(TBA,0);
           Exit;
+        End;
       End;
     End;
+  End;
+  SetLength(TPA,0);
+  SetLength(ATPA,0);
+  SetLength(TBA,0);
+End;
+
+Function RandomFish: TPointArray;
+Var
+  X,Y: Integer;
+Begin
+  Case Random(100) Of
+    0..30: X:=0;
+    31..50: X:=1;
+    51..70: X:=2;
+    71..100: X:=3;
+  End;
+
+  Case Random(100) Of
+    0..30: Y:=0;
+    31..100: Y:=1;
+  End;
+  Result:= [Point(568+(40*X),408+(37*Y)),Point(580+(40*X),417+(37*Y)),Point(580+(40*X),418+(37*Y)),Point(575+(40*X),419+(37*Y))];
+  If Debug Then
+  Begin
+    Writeln(Point(X,Y));
+    Writeln(Result);
+    Smart_DrawDots(Result);
   End;
 End;
 
@@ -1103,7 +1182,7 @@ Begin
   MarkTime(T);
   EarlyClick:=False;
   ColorPoints:=[Point(696,441),Point(708,441),Point(708,451),Point(705,445),Point(708,456)];
-  ColorPoints2:=[Point(703,408),Point(692,406),Point(710,400),Point(708,418),Point(696,419)];
+  ColorPoints2:=RandomFish;
   InitialColors:= GetColors(ColorPoints);
   InitialColors2:= GetColors(ColorPoints2);
   Repeat
@@ -1212,6 +1291,8 @@ End;
 Procedure Setup;
 Begin
   ClearDebug;
+
+  AutoUpdateMe;
 
   {$IFDEF SIMBAMAJOR980}
     SMART_SERVER := 10;
