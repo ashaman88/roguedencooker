@@ -1,0 +1,1253 @@
+Program RoguesDenCooker;
+  {$IFDEF RAYMONDPOWNS}{wrappers} function FloodFillTPAWrap(const TPA: TPointArray): T2DPointArray; var tempATPA: T2DPointArray; begin tempATPA:= FloodFillTPA(TPA); Result:= tempATPA; SetLength(tempATPA, 0); end; function FindTPAEdges(const p: TPointArray): TPointArray; begin FindTPAEdgesWrap(p, result); end; Function RotatePoints(Const P: TPointArray; A, cx, cy: Extended): TPointArray; begin RotatePointsWrap(P, A, cx, cy, result); end; function TPAFromCircle(const CX, CY, Radius: Integer): TPointArray; begin TPAFromCircleWrap(CX, CY, Radius, result); end; function TPAFromEllipse(const CX, CY, XRadius, YRadius : Integer): TPointArray; begin TPAFromEllipseWrap(CX, CY, XRadius, YRadius, result); end; function TPAFromBox(const Box : TBox) : TPointArray; begin TPAFromBoxWrap(Box, result); end; Function ReturnPointsNotInTPA(Const TotalTPA: TPointArray; const Box: TBox): TPointArray; begin ReturnPointsNotInTPAWrap(TotalTPA, Box, result); end; function CombineIntArray(const Ar1, Ar2: TIntegerArray): TIntegerArray; begin CombineIntArrayWrap(Ar1, Ar2, result); end; function ReArrangeandShortenArray(const a: TPointArray; Dist: Integer): TPointArray; begin ReArrangeandShortenArrayWrap(a, Dist, result); end; function ReArrangeandShortenArrayEx(const a: TPointArray; w, h: Integer): TPointArray; begin ReArrangeandShortenArrayExWrap(a, w, h, result); end; function CombineTPA(const Ar1, Ar2: TPointArray): TPointArray; begin CombineTPAWrap(Ar1, Ar2, Result); end; function RemoveDistTPointArray(x, y, dist: Integer;const ThePoints: TPointArray; RemoveHigher: Boolean): TPointArray; begin RemoveDistTPointArrayWrap(x, y, dist, ThePoints, RemoveHigher, Result); end; function TPAFromText(const text, font: String; var w,h: Integer): TPointArray; begin TPAFromTextWrap(text, font, w, h, result); end; function GetColors(const Coords: TPointArray): TIntegerArray; begin GetColorsWrap(Coords, Result); end; function Explode(del, str: string): TStringArray; begin ExplodeWrap(del, str, Result); end; function MergeATPA(const ATPA : T2DPointArray): TPointArray; begin MergeATPAWrap(ATPA, Result); end; function SplitTPA(arr : TPointArray; dist : Integer) : T2DPointArray; begin SplitTPAWrap(arr, dist, result); end; function SplitTPAEx(arr : TPointArray; w, h : integer) : T2DPointArray; begin SplitTPAExWrap(Arr, w, h, result); end; function ClearTPAFromTPA(arP, ClearPoints : TPointArray) : TPointArray; begin ClearTPAFromTPAWrap(arP, ClearPoints, result); end; function TPAToATPAEx(arP : TPointArray; w, h : integer) : T2DPointArray; begin TPAtoATPAExWrap(arP, w, h, result); end; function TPAToATPA(arP : TPointArray; dist : Integer) : T2DPointArray; begin TPAtoATPAWrap(arP, dist, result); end; function FindGapsTPA(TPA : TPointArray; MinPixels : integer) : T2DPointArray; begin FindGapsTPAWrap(tpa, MinPixels, result); end; {$ENDIF}
+  {$DEFINE SMART8}
+  {$I SRL/SRL.Simba}
+  {$I SRL/SRL/Misc/Debug.Simba}
+  {$I SRL/SRL/Misc/SmartGraphics.Simba}
+
+///////////////////////////////////////////////////////////////////////
+//                                                                   //
+//                  Begin of user setup                              //
+//                Fill in the fields below                           //
+//                                                                   //
+///////////////////////////////////////////////////////////////////////
+
+Const
+  CookingType  = 'Lobster';      // ***Input type of item to cook, for progress report only***
+
+  Efficiency   = True;    // ***Minimal antiban settings, will find banker faster***
+
+  Breaks       = False;   // ***Take Breaks or no?***
+  SwitchWorlds = True;    // ***Switch worlds after a break?***
+  BreakIn      = 600;     // ***How long before we take a break? (minutes)***
+  BreakFor     = 15;      // ***How long will we break for? (minutes)***
+  Bir          = 13;      // ***Random minutes to add/subtract from how long until we break***
+  Bfr          = 7;       // ***Random minutes to add/subjtract from break duraction***
+
+Procedure DeclarePlayers;
+Begin
+  NumberOfPlayers(1);
+  CurrentPlayer := 0;
+
+ With Players[0] Do
+ Begin
+    Name        := '';     // ***Player username***
+    Pass        := '';     // ***Player password***
+    Pin         := '5912';     // ***Player pin***
+    WorldInfo   := [];     // ***World Desired***
+    Member      := True;
+    Active      := True;
+  End;
+End;
+
+///////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                       //
+//                            End of user setup                                          //
+//           Don't touch below this line unless you know what you're doing!!             //
+//                                                                                       //
+///////////////////////////////////////////////////////////////////////////////////////////
+
+Var
+  FailCount,XP,XPH,CookCount,CooksPH,StartingExperience: Integer;
+  W,U,V,Z,RealBTime,CurrentBTime,BreakRounds,TotalBreaks: Integer;
+  EarlyClick,GoHigh: Boolean;
+  StartTime,CurrentTime: Int64;
+
+Const
+  ScriptVersion = '1.5';
+
+  BankerHue=0.26;
+  BankerSat=0.59;
+  BankerTol=23;
+  BankerCol=3496520;
+
+  Debug = False;
+
+Function WaitLoggedIn(Time:Integer): Boolean;
+Var
+  T: Integer;
+Begin
+  Result:=(GetColor(472, 490) = 16777215);
+  If Result Then
+    Exit;
+  MarkTime(T);
+  Repeat
+    SRL_ResetNavBar;
+    If TimeFromMark(T)>Time Then
+    Begin
+      Result:=False;
+      Exit;
+    End;
+    Wait(Random(100));
+  Until (GetColor(472, 490) = 16777215);
+  Result:=True;
+End;
+
+Function CheckStuff: Boolean;
+Begin
+  Result:=False;
+
+  If Not WaitLoggedIn(1000) Then
+  Begin
+    LoginPlayer;
+    Wait(RandomRange(3000,4000));
+    ClickNorth(SRL_ANGLE_HIGH);
+    Result:=True;
+  End;
+
+  If FindNormalRandoms Then
+  Begin
+    If Not WaitLoggedIn(1000) Then
+      TerminateScript;
+    ClickNorth(SRL_ANGLE_HIGH);
+    Result:=True;
+    EarlyClick:=False;
+  End;
+End;
+
+procedure SetAngleMed(Angle: Integer);
+begin
+  if ((Angle = SRL_ANGLE_NONE) or (not LoggedIn)) then
+    Exit;
+
+  KeyDown((Angle * 2) + 38);
+  Sleep(200 + Random(300));
+  KeyUp((Angle * 2) + 38);
+  Wait(200 + Random(100));
+end;
+
+ {*******************************************************************************
+
+All of these mouse movements are credited to bENland100 and flight
+
+*******************************************************************************}
+
+
+//By Bandland100, modified to shift mouse speeds after every step
+Procedure SuperWindMouse(xs, ys, xe, ye, gravity, wind, minWait, maxWait, maxStep, targetArea: extended);
+Var
+  veloX,veloY,windX,windY,veloMag,dist,randomDist,lastDist,step: extended;
+  lastX,lastY,MSP,W: integer;
+  sqrt2,sqrt3,sqrt5: extended;
+Begin
+  MSP  := MouseSpeed;
+  sqrt2:= sqrt(2);
+  sqrt3:= sqrt(3);
+  sqrt5:= sqrt(5);
+  While hypot(xs - xe, ys - ye) > 1 Do
+  Begin
+    dist:= hypot(xs - xe, ys - ye);
+    wind:= minE(wind, dist);
+    If dist >= targetArea Then
+    Begin
+      windX:= windX / sqrt3 + (random(round(wind) * 2 + 1) - wind) / sqrt5;
+      windY:= windY / sqrt3 + (random(round(wind) * 2 + 1) - wind) / sqrt5;
+    End Else
+    Begin
+      windX:= windX / sqrt2;
+      windY:= windY / sqrt2;
+      If (maxStep < 3) Then
+      Begin
+        maxStep:= random(3) + 3.0;
+      End Else
+      Begin
+        maxStep:= maxStep / sqrt5;
+      End;
+    End;
+    veloX:= veloX + windX;
+    veloY:= veloY + windY;
+    veloX:= veloX + gravity * (xe - xs) / dist;
+    veloY:= veloY + gravity * (ye - ys) / dist;
+    if hypot(veloX, veloY) > maxStep then
+    Begin
+      randomDist:= maxStep / 2.0 + random(round(maxStep) div 2);
+      veloMag:= sqrt(veloX * veloX + veloY * veloY);
+      veloX:= (veloX / veloMag) * randomDist;
+      veloY:= (veloY / veloMag) * randomDist;
+    End;
+    lastX:= Round(xs);
+    lastY:= Round(ys);
+    xs:= xs + veloX;
+    ys:= ys + veloY;
+
+    Case Random(50) Of
+      1..25: W := (MSP + (Random((MSP/4))));
+      26..50: W := (MSP - (RandomRange((MSP/2), MSP-1)));
+    End;
+    If (W < 1) Then
+      W := 1;
+
+    If (lastX <> Round(xs)) Or (lastY <> Round(ys)) Then
+      MoveMouse(Round(xs), Round(ys));
+
+    step:= hypot(xs - lastX, ys - lastY);
+    //W := round((maxWait - minWait) * (step / maxStep) + minWait);
+    wait(W);
+    lastdist:= dist;
+  end;
+
+  If (Round(xe) <> Round(xs)) or (Round(ye) <> Round(ys)) Then
+    MoveMouse(Round(xe), Round(ye));
+
+  MouseSpeed := MSP;
+End;
+
+Procedure HumanMMouse(eX, eY, ranX, ranY: Integer);
+Var
+  randSpeed: extended;
+  X,Y,X2,Y2,j,Dist,MP: integer;
+Begin
+  j := MouseSpeed;
+  GetMousePos(X, Y);
+  Dist := Distance(X, Y, eX, eY);
+  MP := Round(Dist/150);
+  If MP < 0 Then
+    MP := 1;
+
+  randSpeed := (random(MouseSpeed) / 2.0 + MouseSpeed) / 10.0;
+  X2 := RandomRange(eX-(j*MP), eX+(j*MP));
+  Y2 := RandomRange(eY-(j*MP), eY+(j*MP));
+  SuperWindMouse(X, Y, X2, Y2, 11, 8, 10.0 / randSpeed, 12.0 / randSpeed, 10.0 * randSpeed, 10.0 * randSpeed);
+  GetMousePos(X, Y);
+  MMouse(eX, eY, ranX, ranY);
+  MouseSpeed := j;
+End;
+
+//by LeJingle!!!
+procedure ConvertTime64(timeMS:int64; var YEAR, MONTH, WEEK, DAY, HOUR, MINUTE, SECOND:integer);
+var
+  x: int64;
+begin
+  x := timeMS;
+  (* Better to do the calculations in my opinion (especially for year) now,
+   * trying at run time usually results in breaking/miscalculation.
+   * Hence, commented out [equilavent] expressions
+   *)
+  YEAR   := x div (31536000000); // 1000 * 60 * 60 * 24 * 365 (1 year or 365 days)
+  x      := x mod (31536000000);
+  MONTH  := x div (2592000000); // 1000 * 60 * 60 * 24 * 30 (1 month or 30 days)
+  x      := x mod (2592000000);
+  WEEK   := x div (604800000); // 1000 * 60 * 60 * 24 * 7 (1 week or 7 days)
+  x      := x mod (604800000);
+  DAY    := x div (86400000); // 1000 * 60 * 60 * 24 (1 day or 24 hours)
+  x      := x mod (86400000);
+  HOUR   := x div (3600000); // 1000 * 60 * 60 (1 hour or 60 minutes)
+  x      := x mod (3600000);
+  MINUTE := x div (60000); // 1000 * 60 (1 minute or 60 seconds)
+  x      := x mod (60000);
+  SECOND := x div (1000); // 1000 (1 second, is in MS format now)
+  x      := x mod (1000);
+end;
+
+function MsToTime64(MS: int64): string;
+var
+  STA: TVariantArray;
+  Time: array [0..6] of Integer;
+  i: Integer;
+begin
+  Result := '';
+  STA := [' Years, ', ' Months, ', ' Weeks, ', ' Days, ', ' Hours, ',
+          ' Minutes and ', ' Seconds', 0];
+  ConvertTime64(MS, Time[0], Time[1], Time[2], Time[3], Time[4], Time[5], Time[6]);
+
+  if time[0]= 1 then
+    sta[0]:=' Year, ';
+
+  if time[1]= 1 then
+    sta[1]:=' Month, ';
+
+  if time[2]= 1 then
+    sta[2]:=' Week, ';
+
+  if time[3]= 1 then
+    sta[3]:=' Day, ';
+
+  if time[4]= 1 then
+    sta[4]:=' Hour, ';
+
+  if time[5]= 1 then
+    sta[5]:=' Minute and ';
+
+  if time[6]= 1 then
+    sta[6]:=' Second';
+
+  for i := 0 to 6 do
+    if (Time[i] > 0) or (STA[7]) or (i = 6) then
+      Result := Result + PadZ(IntToStr(Time[i]), STA[7]) + STA[i];
+end;
+
+
+{*******************************************************************************
+procedure FastClick(button: Integer);
+By: Flight
+Description: Quickly click the mouse.
+*******************************************************************************}
+procedure FastClick(button: Integer);
+var
+  x, y: integer;
+begin
+  if (button = mouse_move) then Exit;
+  GetMousePos(x, y);
+  HoldMouse(x, y, button);
+
+  Wait(RandomRange(60, 150));
+
+  GetMousePos(x, y);
+  ReleaseMouse(x, y, button);
+end;
+
+{*******************************************************************************
+procedure ShiftWindMouse(xs, ys, xe, ye, gravity, wind, minWait, maxWait, maxStep,
+  targetArea: extended);
+By: Flight
+Description: Mouse movement that shifts speed after every mouse 'step'
+*******************************************************************************}
+procedure ShiftWindMouse(xs, ys, xe, ye, gravity, wind, minWait, maxWait, maxStep, targetArea: extended);
+var
+  veloX,veloY,windX,windY,veloMag,dist,randomDist,lastDist,step: extended;
+  lastX,lastY,MS: integer;
+  sqrt2,sqrt3,sqrt5: extended;
+begin
+  MS := MouseSpeed;
+  sqrt2:= sqrt(2);
+  sqrt3:= sqrt(3);
+  sqrt5:= sqrt(5);
+  while hypot(xs - xe, ys - ye) > 1 do
+  begin
+    dist:= hypot(xs - xe, ys - ye);
+    wind:= minE(wind, dist);
+    if dist >= targetArea then
+    begin
+      windX:= windX / sqrt3 + (random(round(wind) * 2 + 1) - wind) / sqrt5;
+      windY:= windY / sqrt3 + (random(round(wind) * 2 + 1) - wind) / sqrt5;
+    end else
+    begin
+      windX:= windX / sqrt2;
+      windY:= windY / sqrt2;
+      if (maxStep < 3) then
+      begin
+        maxStep:= random(3) + 3.0;
+      end else
+      begin
+        maxStep:= maxStep / sqrt5;
+      end;
+    end;
+    veloX:= veloX + windX;
+    veloY:= veloY + windY;
+    veloX:= veloX + gravity * (xe - xs) / dist;
+    veloY:= veloY + gravity * (ye - ys) / dist;
+    if hypot(veloX, veloY) > maxStep then
+    begin
+      randomDist:= maxStep / 2.0 + random(round(maxStep) div 2);
+      veloMag:= sqrt(veloX * veloX + veloY * veloY);
+      veloX:= (veloX / veloMag) * randomDist;
+      veloY:= (veloY / veloMag) * randomDist;
+    end;
+    lastX:= Round(xs);
+    lastY:= Round(ys);
+    xs:= xs + veloX;
+    ys:= ys + veloY;
+
+    case Random(2) of
+      1: MouseSpeed := (MS + (RandomRange(2, 5)));
+      2: MouseSpeed := (MS - (RandomRange(2, 5)));
+    end;
+    if (MouseSpeed < 4) then
+      MouseSpeed := 4;
+
+    if (lastX <> Round(xs)) or (lastY <> Round(ys)) then
+      MoveMouse(Round(xs), Round(ys));
+
+    step:= hypot(xs - lastX, ys - lastY);
+    wait(round((maxWait - minWait) * (step / maxStep) + minWait));
+    lastdist:= dist;
+    MouseSpeed := MS;
+  end;
+
+  case Random(2) of
+    1: MouseSpeed := (MS + (RandomRange(2, 5)));
+    2: MouseSpeed := (MS - (RandomRange(2, 5)));
+  end;
+  if (MouseSpeed < 4) then
+      MouseSpeed := 4;
+
+  if (Round(xe) <> Round(xs)) or (Round(ye) <> Round(ys)) then
+    MoveMouse(Round(xe), Round(ye));
+
+  MouseSpeed := MS;
+end;
+
+{*******************************************************************************
+procedure MissMouse(eX, eY, ranX, ranY: Integer);
+By: Flight
+Description: Makes use of ShiftWindMouse; it also initially misses the target
+             point (miss area determined by dist & speed) then corrects itself.
+*******************************************************************************}
+Procedure MissMouse2(eX, eY, ranX, ranY: Integer);
+var
+  randSpeed: extended;
+  X,Y,X2,Y2,A,Dist,MP: integer;
+begin
+  A := MouseSpeed;
+  GetMousePos(X, Y);
+  Dist := Distance(X, Y, eX, eY);
+  MP := Round(Dist/150);
+  if MP < 0 then
+    MP := 1;
+
+  randSpeed := (random(MouseSpeed) / 2.0 + MouseSpeed) / 10.0;
+  X2 := RandomRange(eX-(A*MP), eX+(A*MP));
+  Y2 := RandomRange(eY-(A*MP), eY+(A*MP));
+  ShiftWindMouse(X, Y, X2, Y2, 11, 8, 10.0 / randSpeed, 12.0 / randSpeed, 10.0 * randSpeed, 10.0 * randSpeed);
+  GetMousePos(X, Y);
+  MMouse(eX, eY, ranX, ranY);
+  MouseSpeed := A;
+end;
+
+(*
+MmmWeGotOff
+~~~~~~~~
+
+.. code-block:: pascal
+
+    Procedure MmmWeGotOff(RedTu: Variant);
+
+Moves the mouse to the choosen side of the screen, replicating
+the use of a human to move thier mouse "off-screen" as if
+browsing another part of their computer.
+(What do you do when you browsing "other websites?")
+Int Type:
+
+    1 = Go top side, off-screen
+    2 = Go left side, off-screen
+    3 = Go bottom side, off-screen
+    4 = Go right side, off-screen
+
+.. note::
+
+  by Le Jingle.
+
+Example:
+
+.. code-block:: pascal
+
+  MmmWeGotOff(Random(4), 0, 0);
+
+*)
+Procedure OffMM(RedTu, LeWait, rWait: Integer);
+Var
+  W,H,RX,RY,T,RT,X,Y: Integer;
+Begin
+  GetMousePos(X,Y);
+  If (X>0) And (Y>0) Then
+  Begin
+    GetClientDimensions(W,H);
+    H:=H+50;
+    RX := RandomRange(0, W);
+    RY := RandomRange(0, H);
+    Case (RedTu) Of
+      0..1: HumanMMouse(W/2, RandomRange(-110,-60), RX, 0);
+      2: HumanMMouse(RandomRange(-50,-10), H/2, 0, RY);
+      3: HumanMMouse(W/2, h+RandomRange(10,50), RX, 0);
+      4: HumanMMouse(W+RandomRange(10,50), H/2, 0, RY);
+    End;
+  End;
+  RT:=(Random(rWait));
+  MarkTime(T);
+  Repeat
+    Wait(Random(200));
+  Until TimeFromMark(T)>(LeWait);
+  Wait(RT);
+End;
+
+//by Home
+function AreaToBoxArray(const AreaX1, AreaY1, AreaX2, AreaY2, Width, Height: Integer): TBoxArray;
+var
+  AreaW, AreaH: Integer;
+  BoxX, BoxY: Integer;
+  x, y, i: Integer;
+begin
+  // Calculate the area dimensions
+  AreaW := AreaX2 - AreaX1 + 1;
+  AreaH := AreaY2 - AreaY1 + 1;
+
+  // Calculate the number of boxes in each dimension
+  BoxX := AreaW div Width;
+  if AreaW mod Width <> 0 then Inc(BoxX);
+  BoxY := AreaH div Height;
+  if AreaH mod Height <> 0 then Inc(BoxY);
+
+  // Set the number of boxes
+  SetLength(Result, BoxX * BoxY);
+
+  // Calculate the boxes
+  i := 0;
+  for y := 0 to BoxY - 1 do
+    for x := 0 to BoxX - 1 do
+    begin
+      Result[i] := IntToBox(AreaX1 + x * Width,
+        AreaY1 + y * Height,
+        Min(AreaX2, AreaX1 + (x + 1) * Width - 1),
+        Min(AreaY2, AreaY1 + (y + 1) * Height - 1));
+      Inc(i);
+    end;
+end;
+
+Procedure CheckMovingObjs(RClick: Boolean);
+var
+  TBA: TBoxArray;
+  MidBox: TPoint;
+  TIA: TIntegerArray;
+  H,I,J,X,Y,T: Integer;
+  TPA,PBox: TPointArray;
+  RCOpts: Array of TOptions;
+begin
+  if not LoggedIn then Exit;
+
+  ColorToleranceSpeed(1);
+  SetColorSpeed2Modifiers(0.2, 0.2);
+
+  PBox := TPAFromBox(IntToBox(240, 130, 275, 185));
+  TBA := AreaToBoxArray(MSX1, MSY1, MSX2, MSY2, 35, 35);
+  TIA := PixelShiftMulti(TBA, 300);
+
+  for H := 0 to High(TBA) do
+  begin
+    if (TIA[H] > 100) then
+    begin
+      MidBox := MiddleBox(TBA[H]);
+      SetArrayLength(TPA, Length(TPA)+1);
+      TPA[High(TPA)] := MidBox;
+    end;
+  end;
+
+  ClearTPAFromTPAWrap(TPA, PBox, TPA);
+  if (Length(TPA) < 1) then Exit;
+
+  I := Random(Length(TPA));
+  HumanMMouse(TPA[I].X, TPA[I].Y, 5, 5);
+  if RClick then
+  begin
+    ClickMouse2(False);
+    RCOpts := GetChooseOptions('All');
+    J := Length(RCOpts);
+    Wait(RandomRange(J*75, J*120));
+
+    MarkTime(T);
+    repeat
+      GetMousePos(X, Y);
+      HumanMMouse(X-10,Y-10,15,5);
+      if (TimeFromMark(T) > 5000) then
+        break;
+    until(not FindTextEx(X,Y,['Choose','Option'],['UpCharsEx'],MSX1,MSY1,MSX2,MSY2))
+
+    if FindTextEx(X,Y,['Choose','Option'],['UpCharsEx'],MSX1,MSY1,MSX2,MSY2) then
+      MMouse(RandomRange(MIX1,MIX2),RandomRange(MIY1,MIY2),0,0);
+  end;
+
+end;
+
+Function FindBurned: Integer;
+Var
+  I,X,Y: Integer;
+  IBox: TBox;
+Begin
+  Result:=0;
+  For I:=1 to 28 Do
+  Begin
+    IBox:=InvBox(I);
+    If FindColorTolerance(X,Y,4934735,IBox.X1,IBox.Y1,IBox.X2,IBox.Y2,20) Then
+      Inc(Result);
+  End;
+End;
+
+Function FindBankerEarly:Boolean;
+Var
+  X,Y,H,I,CTS: Integer;
+  TPA: TPointArray;
+  ATPA: T2DPointArray;
+Begin
+  If Not WaitLoggedIn(1000) Then
+    Exit;
+
+  Result:=False;
+  CheckStuff;
+
+  CTS := GetColorToleranceSpeed;
+  ColorToleranceSpeed(2);
+
+  SetColorSpeed2Modifiers(BankerHue,BankerSat);
+  FindColorsSpiralTolerance(MSCX,MSCY,TPA,BankerCol,MSX1,MSY1,MSX2,MSY2,BankerTol);
+  ColorToleranceSpeed(CTS);
+  SetColorSpeed2Modifiers(0.2, 0.2);
+
+  ATPA := SplitTPAEx(TPA,10,10);
+  SortATPASize(ATPA,True);
+
+  If (Length(ATPA) = 0) Then
+    Exit;
+
+  If Debug Then
+    DebugATPABounds(ATPA);
+
+  H := High(ATPA);
+
+  For I := 0 To H Do
+  Begin
+    If Debug Then
+      Writeln('Banker Length: '+ToStr(Length(ATPA[I])));
+
+    If (Length(ATPA[I]) < 55) Then
+      Continue;
+
+    MiddleTPAEx(ATPA[I],X,Y);
+    HumanMMouse(X,Y,5,8);
+
+    If (WaitUpTextMulti(['Emerald Benedict', 'rald', 'dic', 'ene', 'mera'], RandomRange(250,300))) Then
+    Begin
+      If Debug Then
+        Writeln('Found banker uptext, clicking');
+      FastClick(Mouse_Right);
+      If WaitOptionMultiEx(['Bank'],'all',Move,RandomRange(700,900)) Then
+      Begin
+        Result:=True;
+        SetLength(ATPA,0);
+        SetLength(TPA,0);
+        Exit;
+      End;
+    End;
+  End;
+  SetLength(ATPA,0);
+  SetLength(TPA,0);
+End;
+
+Function Antiban(EarlyBanker: Boolean): Boolean;
+Var
+  I: Integer;
+Begin
+  If (EarlyBanker) And (Not EarlyClick) Then
+    If WaitFunc(@FindBankerEarly,100,RandomRange(1000,1200)) Then
+    Begin
+      EarlyClick:=True;
+      MakeCompass('N');
+      Exit;
+    End Else
+      CompassMovement(10,200,False);
+  I := Random(600);
+  Case I Of
+    1..3:
+      Begin
+        RandomRClick;
+      End;
+    4..7:
+      Begin
+        HoverSkill('Cooking', False);
+        GameTab(Tab_Inv);
+      End;
+    8..11:
+      Begin
+        CheckMovingObjs(False);
+      End;
+    12..200:
+      Begin
+        SleepAndMoveMouse(RandomRange(400,500));
+        Result:=True;
+      End;
+    201..400:
+      Begin
+        Wait(RandomRange(250, 1500));
+       // OffMM(Random(4),RandomRange(2500,4000),10000);
+        Result:=True;
+      End;
+    401..600:
+      Begin
+        Wait(RandomRange(250, 4000));
+        Result:=True;
+      End;
+  End;
+  Wait(RandomRange(1200, 3550));
+End;
+
+Function BreakHandler(BreakIn, BreakFor, randBreakIn, randBreakFor: Integer): Boolean;
+Var
+  H,M,S: Integer;
+Begin
+  If Not LoggedIn Then
+    Exit;
+
+  If (HowManyPlayers = 1) Then
+  Begin
+    If (GetTimeRunning < ((W) + (V) + BreakRounds)) Then
+      Exit Else
+      If (GetTimeRunning > ((W) + (V) + BreakRounds)) Then
+      Begin
+        RealBTime := ((U+Z)/60000);
+        Writeln('Taking a break for about ' + IntToStr(RealBTime) + ' minutes.');
+        Logout;
+        MarkTime(CurrentBTime);
+        Repeat
+          Wait(21000);
+          ConvertTime((U+Z)-TimeFromMark(CurrentBTime),H,M,S);
+          Writeln('Breaktime left: '+IntToStr(H)+':'+IntToStr(M)+':'+IntToStr(S));
+        Until(TimeFromMark(CurrentBTime)>(U+Z));
+        Writeln('Logging in.');
+        If SwitchWorlds Then
+          If LoginPlayerToLob Then
+            ChangeWorld(RandomWorld(True, False)) Else
+            LoginPlayer;
+        Wait(4000);
+        Result := LoggedIn;
+        ClickNorth(SRL_ANGLE_HIGH);
+        IncEx(BreakRounds, (W) + (U));
+        Inc(TotalBreaks);
+        Writeln('The next break will occur in about ' + IntToStr(BreakIn) + ' minutes.');
+        W := (BreakIn * 60000);
+        U := (BreakFor * 60000);
+        V := RandomRange(-BIR * 60000, BIR * 60000);
+        Z := RandomRange(-BFR * 60000, BFR * 60000);
+      End;
+  End;
+End;
+
+Procedure ProgressReport;
+Var
+  TTB: Integer;
+Begin
+  If (Not Debug) Then
+    ClearDebug;
+
+  TTB := (((W) + (V) + BreakRounds)-GetTimeRunning);
+
+  CurrentTime:= GetSystemTime - StartTime;
+  CookCount := (CookCount + InvCount - FindBurned);
+  XP := (GetXPBarTotal - StartingExperience);
+  XPH := Round(XP * (3600.0 / (GetTimeRunning / 1000.0)));
+  CooksPH := Round((CookCount * (3600.0 / (GetTimeRunning / 1000.0))));
+
+  Writeln('=========AshamanRoguesCooker v'+ScriptVersion+'=========');
+  Writeln('Time Running: ' + ToStr(MsToTime64(CurrentTime)));
+  Writeln(CookingType+' Cooked: ' + IntToStr(CookCount));
+  Writeln('Experience Earned: ' + IntToStr(XP));
+  Writeln('Experience/Hour: ' + ToStr(XPH));
+  Writeln(CookingType+'/H: ' + ToStr(CooksPH));
+  Writeln('==========================================');
+
+  If Breaks Then
+    Writeln('Time until break: '+MsToTime(TTB, Time_Bare));
+End;
+
+Function WaitPixelChange(Time:Integer):Boolean;
+Var
+  T,First,Second:Integer;
+  ColorPoints: TPointArray;
+  InitialColors: TIntegerArray;
+Begin
+  First := GetXPBarTotal;
+  ColorPoints:=[Point(568,225),Point(574,234),Point(582,225),Point(583,223)];
+  InitialColors:= GetColors(ColorPoints);
+  MarkTime(T);
+  Repeat
+    Wait(Random(100));
+    Second := GetXPBarTotal;
+    If InitialColors<>GetColors(ColorPoints) Then
+      Break;
+    If TimeFromMark(T) > Time Then
+    Begin
+      Result := False;
+      Exit;
+    End;
+  Until(Second > First);
+  Result := True;
+End;
+
+Function FindBanker:Boolean;
+Var
+  X,Y,H,I,CTS,T: Integer;
+  TPA: TPointArray;
+  ATPA: T2DPointArray;
+Begin
+  If Not WaitLoggedIn(1000) Then
+    Exit;
+
+  Result:=False;
+  CheckStuff;
+
+  CTS := GetColorToleranceSpeed;
+  ColorToleranceSpeed(2);
+
+  SetColorSpeed2Modifiers(BankerHue,BankerSat);
+  FindColorsSpiralTolerance(MSCX,MSCY,TPA,BankerCol,MSX1,MSY1,MSX2,MSY2,BankerTol);
+  ColorToleranceSpeed(CTS);
+  SetColorSpeed2Modifiers(0.2, 0.2);
+
+  ATPA := SplitTPAEx(TPA,10,10);
+  SortATPASize(ATPA,True);
+
+  If (Length(ATPA) = 0) Then
+    Exit;
+
+  If Debug Then
+    DebugATPABounds(ATPA);
+
+  H := High(ATPA);
+
+  For I := 0 To H Do
+  Begin
+    If Debug Then
+      Writeln('Banker Length: '+ToStr(Length(ATPA[I])));
+
+    If (Length(ATPA[I]) < 60) Then
+      Continue;
+
+    MiddleTPAEx(ATPA[I],X,Y);
+    HumanMMouse(X,Y,5,8);
+
+    If (WaitUpTextMulti(['Emerald Benedict', 'rald', 'dic', 'ene', 'mera'], RandomRange(250,300))) Then
+    Begin
+      FastClick(Mouse_Right);
+      If WaitOption('Bank',900) Then
+      Begin
+        If GoHigh Then
+          SetAngle(SRL_ANGLE_HIGH);
+        MakeCompass('N');
+        MarkTime(T);
+        Repeat
+          Wait(Random(100));
+          If (TimeFromMark(T) > 10000) Then
+            Exit;
+          If CheckStuff Then
+            Exit;
+        Until(BankScreen) Or (PinScreen);
+        SetLength(ATPA,0);
+        SetLength(TPA,0);
+        Result:= True
+        Exit;
+      End;
+    End;
+  End;
+  SetLength(ATPA,0);
+  SetLength(TPA,0);
+End;
+
+Procedure Banking;
+Var
+  I: Integer;
+Begin
+  If Not WaitLoggedIn(1000) Then
+    Exit;
+
+  If CheckStuff Then
+    Exit;
+
+  If (PinScreen) Then
+    InPin(Players[0].Pin);
+
+  Wait(Random(100));
+
+  If Not InvEmpty Then
+    QuickDeposit(SRL_DEPOSIT_ALL);
+
+  For I:=0 To 3 Do
+    If WithdrawEx(9,0,0,['Raw','aw','Ra','w','a']) Then
+      Break Else
+      If ChooseOptionMulti(['Withdraw-All', 'w-A']) Then
+        Break;
+
+  Wait(Random(100));
+  CloseBank;
+  Wait(Random(100));
+  MissMouse2(576,279-50,10,10);
+End;
+
+Procedure WalkToFire;
+Var
+  SpotDTM,X,Y,T: Integer;
+  aFound: Extended;
+Begin
+  If Not WaitLoggedIn(1000) Then
+    Exit;
+
+  CheckStuff;
+
+  ClickNorth(SRL_ANGLE_HIGH);
+
+
+  If FindSymbol(X,Y,'Bank') Then
+  Begin
+    HumanMMouse(X,Y,2,2);
+    FastClick(Mouse_Left);
+
+    Wait(RandomRange(1000,1340));
+    MarkTime(T);
+    Repeat
+      Wait(Random(100));
+      If TimeFromMark(T)>8000 Then
+        Break;
+      If CheckStuff Then
+        Break;
+      If Not WaitLoggedIn(1000) Then
+        Break;
+    Until Not IsMoving;
+  End Else
+  Begin
+    SpotDTM := DTMFromString('mlwAAAHicY2dgYChmYmBYCMRToTgUiP2BOBGIO4DybQwQuhaIs4F4HhAfAeL///8zMDExMbx69w2MQWwY/g+U58eBGfFgKAAAic0RSg==');
+    If FindDTMRotated(SpotDTM,X,Y,MMX1,MMY1,MMX2,MMY2,-Pi,Pi,Pi/30,aFound) Then
+    Begin
+      HumanMMouse(X,Y,2,2);
+      FastClick(Mouse_Left);
+
+      Wait(RandomRange(1000,1340));
+      MarkTime(T);
+      Repeat
+        Wait(Random(200));
+        If TimeFromMark(T)>8000 Then
+          Break;
+        If CheckStuff Then
+          Break;
+        If Not WaitLoggedIn(1000) Then
+          Break;
+      Until Not IsMoving;
+    End;
+    FreeDTM(SpotDTM);
+  End;
+End;
+
+Function CookMenu: Boolean;
+Var
+  CTS: Integer;
+Begin
+  If Debug Then
+    Writeln('ENTERING COOKMENU');
+
+  CTS := GetColorToleranceSpeed;
+  ColorToleranceSpeed(2);
+
+  SetColorSpeed2Modifiers(0.02, 0.36);
+
+  If CountColorTolerance(8280838,398,361-50,480,369-50,25) > 500 Then
+    Result:=True;
+
+  If Debug Then
+    Writeln('CookMenu color count: '+ToStr(CountColorTolerance(8280838,398,361-50,480,369-50,25)));
+
+  ColorToleranceSpeed(CTS);
+  SetColorSpeed2Modifiers(0.2, 0.2);
+End;
+
+Function FindFire:Boolean;
+Var
+  X,Y,H,I,CTS,T: Integer;
+  B: TBox;
+  TBA: TBoxArray;
+  MBP: TPoint;
+  TPA: TPointArray;
+  ATPA: T2DPointArray;
+Begin
+  If Not WaitLoggedIn(1000) Then
+    Exit;
+
+  CheckStuff;
+
+  MarkTime(T);
+  Repeat
+    If (TimeFrommark(T)>5000) And (InvEmpty) Then
+      Exit;
+    If (TimeFromMark(T) > 10000) Then
+    Begin
+      Writeln('We Are Low On Materials Terminating');
+      Writeln('Screenshot saved, send to Ashaman if you"re not really out of fish!');
+      SaveScreenshot(ScriptPath + '/fail_.bmp');
+      Writeln('Inventory Count is: '+ToStr(InvCount)+' Tell Ashaman this!!!');
+      Logout;
+      TerminateScript();
+    End;
+    CheckStuff;
+    Wait(Random(200));
+  Until (InvCount>15);
+
+  Wait(Random(100));
+
+  If (CountColor(16777215,MIX1,MIY1,MIX2,MIY2)=0) Then
+    For I:=0 To 3 Do
+    Begin
+      GetMousePos(X,Y);
+      If Not PointInBox(Point(X,Y),InvBox(1)) Then
+      Begin
+        InvMouse(1,Mouse_Move);
+        If Not WaitUpTextMulti(['Use','se ','Raw','U','aw'],RandomRange(150,300)) Then
+          Exit;
+      End;
+
+      FastClick(Mouse_Left);
+
+      MarkTime(T);
+      Repeat
+        Wait(Random(100));
+        If TimeFromMark(T)>6000 Then
+          Exit;
+        If CheckStuff Then
+          Exit;
+      Until (CountColor(16777215,MIX1,MIY1,MIX2,MIY2)<>0);
+      If TimeFromMark(T)<6000 Then
+        Break;
+    End;
+
+  CTS:= GetColorToleranceSpeed;
+  ColorToleranceSpeed(2);
+
+  SetColorSpeed2Modifiers(0.08, 1.45);
+  FindColorsSpiralTolerance(MSCX, MSCY, TPA, 2250348, MSX1, MSY1, MSX2, MSY2, 17);
+  ColorToleranceSpeed(CTS);
+  SetColorSpeed2Modifiers(0.2, 0.2);
+
+  If (Length(TPA) = 0) Then
+    Exit;
+
+  ATPA := TPAtoATPAEx(TPA, 10, 10);
+  SortATPASize(ATPA,True);
+
+  If (Length(ATPA) = 0) Then
+    Exit;
+
+  If Debug Then
+    DebugATPABounds(ATPA);
+
+  H := High(ATPA);
+
+  For I := 0 to H Do
+  Begin
+    If (GetArrayLength(ATPA[I]) > 15) Then
+    Begin
+      If Debug Then
+        Writeln('Outer Fire Length: '+ToStr(Length(ATPA[I])));
+
+      B := GetTPABounds(ATPA[I]);
+      B := IntToBox(B.X1-10,B.Y1-10,B.X2+10,B.Y2+10);
+
+      With B Do
+      Begin
+        ColorToleranceSpeed(2);
+        SetColorSpeed2Modifiers(0.17, 2.57);
+
+        FindColorsSpiralTolerance(MSCX, MSCY, TPA, 3315418, B.X1, B.Y1, B.X2, B.Y2, 10);
+        ColorToleranceSpeed(CTS);
+        SetColorSpeed2Modifiers(0.2, 0.2);
+
+        If (Length(TPA) > 15) Then
+        Begin
+          If Debug Then
+            Writeln('Inner Fire Length: '+ToStr(Length(TPA)));
+
+          SetArrayLength(TBA, Length(TBA)+1);
+          TBA[High(TBA)] := B;
+        End;
+      End;
+    End;
+  End;
+
+  If Debug Then
+    Smart_DrawBoxes(True,False,TBA,clRed);
+
+  For H := 0 To High(TBA) Do
+  Begin
+    MBP := MiddleBox(TBA[H]);
+    HumanMMouse(MBP.X, MBP.Y,5,5);
+
+    If (WaitUpTextMulti(['Use Raw','se Ra','option'], RandomRange(1000,2500))) Then
+    Begin
+      ClickMouse2(False);
+      If WaitOptionMulti(['> Fire'],800) Then
+      Begin
+        Wait(Random(100));
+        MissMouse2(373,313,15,5);
+        MarkTime(T);
+        Repeat
+          Wait(Random(100));
+          If CookMenu Then
+          Begin
+            Wait(Random(100));
+            ClickMouse2(True);
+            Wait(RandomRange(3000,4000));
+            Result:=True;
+            Break;
+          End;
+          If TimeFromMark(T)>8000 Then
+            Break;
+        Until Not WaitLoggedIn(1000);
+
+        If TimeFromMark(T)>8000 Then
+          Continue;
+
+        If (Not(WaitPixelChange(6000))) Then
+        Begin
+          If (CountColor(16777215,MIX1,MIY1,MIX2,MIY2)<>0) Then
+          Begin
+            HumanMMouse(536,225,5,5);
+            ClickMouse2(True);
+          End;
+          Result:=False;
+          Exit;
+        End Else
+          Exit;
+      End;
+    End;
+  End;
+End;
+
+Procedure CookWait;
+Var
+  InitialColors,InitialColors2: TIntegerArray;
+  ColorPoints,ColorPoints2: TPointArray;
+  T: Integer;
+Begin
+  MarkTime(T);
+  EarlyClick:=False;
+  ColorPoints:=[Point(696,441),Point(708,441),Point(708,451),Point(705,445),Point(708,456)];
+  ColorPoints2:=[Point(703,408),Point(692,406),Point(710,400),Point(708,418),Point(696,419)];
+  InitialColors:= GetColors(ColorPoints);
+  InitialColors2:= GetColors(ColorPoints2);
+  Repeat
+    Wait(Random(100));
+    If CheckStuff Then
+      Exit;
+    If InitialColors<>GetColors(ColorPoints) Then
+      Break Else
+      If Not EarlyClick Then
+        If InitialColors2<>GetColors(ColorPoints2) Then
+          AntiBan(True) Else
+          If Efficiency Then
+            AntiBan(True) Else
+            AntiBan(False);
+    If (TimeFromMark(T) > 70000) Then
+      Exit;
+  Until Not WaitLoggedIn(1000);
+  ProgressReport;
+  Wait(Random(500));
+End;
+
+Procedure Mainloop;
+Var
+  T: Integer;
+Begin
+  If Not WaitLoggedIn(1000) Then
+    Exit;
+
+  If Breaks Then
+    BreakHandler(BreakIn,BreakFor,Bir,Bfr);
+
+  If EarlyClick Then
+  Begin
+    EarlyClick:=False;
+    If OptionsExist(['Bene','dict'],False) Then
+    Begin
+      ClickMouse2(True);
+      MarkTime(T);
+      Repeat
+        Wait(Random(100));
+        If (TimeFromMark(T) > 10000) Then
+          Exit;
+        If CheckStuff Then
+          Exit;
+      Until(BankScreen) Or (PinScreen);
+    End;
+  End Else
+    If (Not(WaitFunc(@FindBanker,1,RandomRange(3000,4000)))) Then
+    Begin
+      If Not WaitLoggedIn(1000) Then
+        Exit;
+      Case Random(2) Of
+        0:
+        Begin
+          CheckStuff;
+          MakeCompass('S');
+          SetAngleMed(SRL_ANGLE_LOW);
+          GoHigh:=True;
+        End;
+        1:
+        Begin
+          CheckStuff;
+          MakeCompass('N');
+          SetAngleMed(SRL_ANGLE_LOW);
+          GoHigh:=True;
+        End;
+      End;
+      FailCount:=FailCount+1;
+      If FailCount>3 Then
+      Begin
+        WalkToFire;
+        FailCount:=0;
+      End;
+    End Else
+      FailCount:=0;
+
+  EarlyClick:=False;
+
+  If (BankScreen) Or (PinScreen) Then
+  Begin
+    Banking;
+    If Not WaitFunc(@FindFire,1,RandomRange(2200,3000)) Then
+    Begin
+      WalkToFire;
+      If (CountColor(16777215,MIX1,MIY1,MIX2,MIY2)<>0) Then
+      Begin
+        HumanMMouse(536,225,5,5);
+        ClickMouse2(True);
+      End;
+      MakeCompass('N');
+      SetAngle(SRL_ANGLE_HIGH);
+      GoHigh:=False;
+      If FindFire Then
+        CookWait;
+    End Else
+      CookWait;
+  End Else
+    If Length(GetMiniMapDotsIn('yellow',597,43,650,101))=0 Then
+    Begin
+      MakeCompass('S');
+      SetAngleMed(SRL_ANGLE_LOW);
+      GoHigh:=True;
+    End;
+End;
+
+Procedure Setup;
+Begin
+  ClearDebug;
+
+  {$IFDEF SIMBAMAJOR980}
+    SMART_SERVER := 10;
+    SMART_MEMBERS := TRUE;
+    SMART_SIGNED := TRUE;
+    SMART_SUPERDETAIL := FALSE;
+  {$ELSE}
+    SRL_SIXHOURFIX := TRUE;
+    SMART_FIXSPEED := TRUE;
+  {$ENDIF}
+
+  SetupSRL;
+
+  DeclarePlayers;
+  LoginPlayer;
+
+  GameTab(Tab_Inv);
+  ClickNorth(SRL_ANGLE_HIGH);
+  StartingExperience := GetXPBarTotal;
+  StartTime:=GetSystemTime;
+
+  W := (BreakIn * 60000);
+  U := (BreakFor * 60000);
+  V := RandomRange(-BIR * 60000, BIR * 60000);
+  Z := RandomRange(-BFR * 60000, BFR * 60000);
+End;
+
+Begin
+  Setup;
+  Repeat
+    Mainloop;
+    If Not WaitLoggedIn(1000) Then
+    Begin
+      LoginPlayer;
+      ClickNorth(SRL_ANGLE_HIGH);
+    End;
+  Until(AllPlayersInactive);
+  Terminatescript;
+End.
